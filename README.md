@@ -218,9 +218,20 @@ systemd/
     jitsi-invite.service           Hardened service unit
 
 docs/
+    administrator-guide.md         Administrator account management
+    moderator-guide.md             Illustrated organizer workflow
+    images/                        Documentation images
     installation.md                Reproducible manual installation
     architecture.md                Detailed design notes
 ```
+
+## User guides
+
+- [Administrator Guide](docs/administrator-guide.md) — create, update,
+  list, and remove organizer portal accounts.
+- [Moderator Guide](docs/moderator-guide.md) — illustrated workflow for
+  creating conferences, sharing guest links, entering as moderator, and
+  revoking invitations.
 
 ## Configuration
 
