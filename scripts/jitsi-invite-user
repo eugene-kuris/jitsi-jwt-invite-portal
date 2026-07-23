@@ -1,0 +1,138 @@
+#!/bin/bash
+set -euo pipefail
+umask 077
+
+AUTH_FILE="/etc/nginx/jitsi-invite.htpasswd"
+
+usage() {
+    echo "Usage:"
+    echo "  jitsi-invite-user list"
+    echo "  jitsi-invite-user add USERNAME"
+    echo "  jitsi-invite-user delete USERNAME"
+    exit 2
+}
+
+validate_username() {
+    local username="$1"
+
+    case "$username" in
+        (*[!A-Za-z0-9._-]*|'')
+            echo "ERROR: username may contain only A-Z, a-z, 0-9, dot, underscore and hyphen"
+            exit 1
+            ;;
+    esac
+}
+
+command="${1:-}"
+
+case "$command" in
+    list)
+        if [ ! -s "$AUTH_FILE" ]; then
+            echo "No portal users."
+            exit 0
+        fi
+
+        cut -d: -f1 "$AUTH_FILE"
+        ;;
+
+    add)
+        username="${2:-}"
+        validate_username "$username"
+
+        password="$(
+            systemd-ask-password \
+                "New Jitsi Invite password for ${username}"
+        )"
+
+        if [ -z "$password" ]; then
+            echo "ERROR: empty password"
+            exit 1
+        fi
+
+        password_hash="$(
+            printf '%s' "$password" |
+            openssl passwd -apr1 -stdin
+        )"
+
+        unset password
+
+        temporary_file="$(
+            mktemp "${AUTH_FILE}.XXXXXX"
+        )"
+
+        trap 'rm -f "$temporary_file"' EXIT
+
+        if [ -f "$AUTH_FILE" ]; then
+            awk -F: -v username="$username" '
+                $1 != username
+            ' "$AUTH_FILE" >"$temporary_file"
+        fi
+
+        printf '%s:%s\n' \
+            "$username" \
+            "$password_hash" \
+            >>"$temporary_file"
+
+        unset password_hash
+
+        chown root:www-data "$temporary_file"
+        chmod 0640 "$temporary_file"
+
+        mv -f "$temporary_file" "$AUTH_FILE"
+        trap - EXIT
+
+        runuser -u www-data -- test -r "$AUTH_FILE"
+
+        nginx -t
+        systemctl reload nginx
+
+        echo "Portal user '${username}' created or updated."
+        ;;
+
+    delete)
+        username="${2:-}"
+        validate_username "$username"
+
+        if [ ! -f "$AUTH_FILE" ]; then
+            echo "ERROR: authentication file does not exist"
+            exit 1
+        fi
+
+        if ! awk -F: -v username="$username" '
+            $1 == username {
+                found=1
+            }
+            END {
+                exit(found ? 0 : 1)
+            }
+        ' "$AUTH_FILE"; then
+            echo "ERROR: user '${username}' does not exist"
+            exit 1
+        fi
+
+        temporary_file="$(
+            mktemp "${AUTH_FILE}.XXXXXX"
+        )"
+
+        trap 'rm -f "$temporary_file"' EXIT
+
+        awk -F: -v username="$username" '
+            $1 != username
+        ' "$AUTH_FILE" >"$temporary_file"
+
+        chown root:www-data "$temporary_file"
+        chmod 0640 "$temporary_file"
+
+        mv -f "$temporary_file" "$AUTH_FILE"
+        trap - EXIT
+
+        nginx -t
+        systemctl reload nginx
+
+        echo "Portal user '${username}' deleted."
+        ;;
+
+    *)
+        usage
+        ;;
+esac

@@ -1,0 +1,56 @@
+# Secrets and environment files
+*.env
+.env
+.env.*
+!.env.example
+!*.env.example
+
+# Databases and runtime state
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+
+# Authentication data
+jitsi-invite.htpasswd
+*.htpasswd.local
+
+# Private keys and certificates
+*.key
+*.pem
+*.p12
+*.pfx
+
+# Tokens, credentials and local secrets
+secrets/
+credentials/
+*.secret
+*.token
+
+# Backups and deployment checkpoints
+*.tar
+*.tar.gz
+*.tgz
+*.backup
+*.bak
+*checkpoint*
+checkpoints/
+
+# Logs and temporary files
+*.log
+*.tmp
+*.swp
+*~
+.DS_Store
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+
+# Local development
+.vscode/
+.idea/
