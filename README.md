@@ -200,6 +200,7 @@ config/
     portal.env.example             Portal configuration example
 
 examples/
+    jicofo.conf                    Disable automatic Jicofo ownership
     jitsi-config.js                Disable bare-link invitation UI
     prosody-virtualhost.cfg.lua    Strict JWT and role configuration
 
@@ -217,10 +218,15 @@ systemd/
     jitsi-invite.service           Hardened service unit
 
 docs/
+    installation.md                Reproducible manual installation
     architecture.md                Detailed design notes
 ```
 
 ## Configuration
+
+For the complete deployment sequence, validation steps, rollback
+procedure, and mandatory role test, see
+[docs/installation.md](docs/installation.md).
 
 Create production files from the supplied examples:
 
@@ -369,6 +375,13 @@ prosodyctl check config
 
 ## Upgrade safety
 
+Jicofo automatic ownership must remain disabled so that participant
+roles are determined by the JWT-aware Prosody module:
+
+```hocon
+jicofo.conference.enable-auto-owner = false
+```
+
 Install the custom Prosody module outside package-managed directories:
 
 ```text
@@ -408,4 +421,5 @@ See [SECURITY.md](SECURITY.md) for additional guidance.
 
 ## License
 
-A project license has not yet been selected.
+Licensed under the [Apache License, Version 2.0](LICENSE).
+See [NOTICE](NOTICE) for the project attribution notice.
