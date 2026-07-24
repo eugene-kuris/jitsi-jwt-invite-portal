@@ -295,8 +295,17 @@ Usernames are restricted to:
 A-Z a-z 0-9 . _ -
 ```
 
-Passwords are collected through `systemd-ask-password`, and the
-htpasswd file is updated through a temporary file and atomic rename.
+Password input is intentionally visible and is requested twice. This mode is
+intended for a physically controlled, single-user administrative
+session. Visible input helps detect a faulty keyboard key, an unexpected
+keyboard layout, or automatic language switching.
+
+After a successful update, the utility prints the assigned plaintext
+password once and prints the resulting APR1 hash. Both values are
+sensitive and may remain in terminal scrollback. Do not use this mode
+when the screen can be observed, shared, or recorded.
+
+The htpasswd file is updated through a temporary file and atomic rename.
 
 ## Jitsi invitation controls
 
@@ -315,21 +324,26 @@ https://meet.example.com/join/<random-code>
 
 ## Tested software versions
 
-The reference implementation was tested with:
+The original reference deployment completed end-to-end portal testing.
+A second clean Debian 12 VM is being used for release-candidate installation
+and compatibility validation.
 
-| Component | Version |
-|---|---:|
-| Debian | 12 |
-| Python | 3.11.2 |
-| Jitsi Meet | 2.0.10078-1 |
-| Jitsi Meet Prosody | 1.0.8448-1 |
-| Jicofo | 1.0-1124-1 |
-| Jitsi Videobridge 2 | 2.3-209-gb5fbe618-1 |
-| Prosody | 0.12.3 |
-| nginx | 1.22.1 |
-| coturn | 4.6.1 |
+| Component | Reference deployment | Clean-VM RC validation |
+|---|---:|---:|
+| Debian | 12 | 12 |
+| Python | 3.11.2 | 3.11.2 |
+| Jitsi Meet | 2.0.10078-1 | 2.0.11031-1 |
+| Jitsi Meet Prosody | 1.0.8448-1 | 1.0.9268-1 |
+| Jicofo | 1.0-1124-1 | 1.0-1183-1 |
+| Jitsi Videobridge 2 | 2.3-209-gb5fbe618-1 | 2.3-295-g8d5c0037b-1 |
+| Prosody | 0.12.3 | 13.0.6 |
+| Prosody Lua runtime | 5.4 | 5.2 |
+| nginx | 1.22.1 | 1.22.1 |
+| coturn | 4.6.1 | 4.6.1 |
 
-Compatibility with other releases has not yet been fully validated.
+The two environments demonstrate that the Prosody version and its selected
+Lua runtime must be checked independently. Compatibility with other releases
+has not yet been fully validated.
 
 ## Verified behavior
 
@@ -346,7 +360,8 @@ The reference deployment successfully verified:
 - permanent invitations survive room reuse;
 - repeated entries generate new JWT audit events;
 - the backend has no TCP listener;
-- the health endpoint returns `ok`;
+- direct Unix-socket access to `/invite/` returns `403` without
+  `X-Remote-User` and `200` with a trusted organizer identity;
 - controlled service restarts complete successfully.
 
 ## Validation
@@ -357,8 +372,25 @@ Basic source validation:
 python3 -m py_compile app/app.py
 python3 -m py_compile scripts/jitsi-jwt
 bash -n scripts/jitsi-invite-user
-luac5.4 -p prosody/mod_token_roles.lua
+PROSODY_LUA_VERSION="$(
+    prosodyctl about 2>/dev/null |
+    sed -nE "s/^Lua version:.* ([0-9]+\.[0-9]+)$/\1/p"
+)"
+
+case "$PROSODY_LUA_VERSION" in
+    5.2|5.4)
+        "luac${PROSODY_LUA_VERSION}" \
+            -p prosody/mod_token_roles.lua
+        ;;
+    *)
+        echo "ERROR: unsupported or undetected Prosody Lua runtime" >&2
+        exit 1
+        ;;
+esac
+
+unset PROSODY_LUA_VERSION
 systemd-analyze verify systemd/jitsi-invite.service
+tests/test-jitsi-invite-user.sh
 ```
 
 Validate nginx before reloading:

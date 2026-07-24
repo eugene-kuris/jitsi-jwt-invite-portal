@@ -58,7 +58,21 @@ Example:
 sudo jitsi-invite-user add alice
 ```
 
-A secure password prompt appears. Enter the new password when requested.
+The utility intentionally displays password input and asks for the same
+value a second time. This is a deliberate usability and security
+trade-off intended for a physically controlled, single-user
+administrative session.
+
+Visible input makes it easier to detect a faulty keyboard key, an
+unexpected keyboard layout, or automatic language switching. It is not
+appropriate when another person can observe the screen, when the
+terminal is shared or recorded, or when its scrollback is retained by
+an untrusted system.
+
+After a successful update, the utility prints the assigned plaintext
+password once and prints the resulting APR1 password hash. Treat both
+values as sensitive. Clear or close the administrative terminal when
+appropriate.
 
 Allowed username characters are:
 
@@ -130,6 +144,12 @@ world-readable.
 
 - Give every organizer a separate account.
 - Use a password manager and a unique strong password.
+- Run account creation only in a physically controlled, single-user
+  terminal session.
+- Do not use visible password entry in a shared, observed or recorded
+  terminal.
+- Treat terminal scrollback containing plaintext passwords or APR1
+  hashes as sensitive.
 - Remove accounts immediately when access is no longer required.
 - Review active invitations before deleting an organizer.
 - Never paste htpasswd contents into tickets, chats, logs, or Git commits.

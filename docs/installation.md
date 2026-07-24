@@ -22,7 +22,7 @@ apt-get install -y ca-certificates git
 Set `VERSION` to the published release tag and clone it over HTTPS:
 
 ```bash
-VERSION=v0.1.0-rc1
+VERSION=v0.1.0-rc2
 
 test ! -e /root/jitsi-jwt-invite-portal || {
     echo "ERROR: /root/jitsi-jwt-invite-portal already exists"
@@ -80,6 +80,7 @@ apt-get update
 apt-get install -y \
     apache2-utils \
     curl \
+    lua5.2 \
     lua5.4 \
     openssl \
     python3
@@ -87,6 +88,11 @@ apt-get install -y \
 
 Python's standard library supplies the HTTP server, SQLite and JWT signing
 primitives used by the portal. No Python packages from PyPI are required.
+
+Prosody packages on Debian 12 may use different Lua runtimes. The reference
+deployment uses Lua 5.4, while the clean-VM validation host uses Lua 5.2.
+Both command-line compilers are therefore installed. During validation, use
+the compiler matching the `Lua version` reported by `prosodyctl about`.
 
 ## 4. Create the service account and directories
 
@@ -146,22 +152,43 @@ install -m 0640 -o root -g jitsi-invite \
     /etc/jitsi-invite/portal.env
 ```
 
-Generate secrets without printing them into public logs:
+Generate a separate secret for portal form protection:
 
 ```bash
-JWT_SECRET="$(openssl rand -hex 48)"
 CSRF_SECRET="$(openssl rand -hex 32)"
 ```
 
-Edit `/etc/jitsi-invite/jwt.env` so that it contains:
+The JWT signing secret is shared with Prosody. Choose exactly one of
+the following cases.
+
+### Existing strict-JWT Jitsi deployment
+
+Reuse the active Prosody `app_id` and `app_secret`. Do not generate a
+second unrelated JWT secret: tokens signed by it would be rejected by
+Prosody.
+
+Copy the existing values into `/etc/jitsi-invite/jwt.env`:
 
 ```dotenv
-JITSI_APP_ID=replace-with-a-private-application-id
-JITSI_APP_SECRET=replace-with-the-generated-jwt-secret
+JITSI_APP_ID=the-active-prosody-app-id
+JITSI_APP_SECRET=the-active-prosody-app-secret
 JITSI_DOMAIN=meet.example.com
 ```
 
-Edit `/etc/jitsi-invite/portal.env` so that it contains:
+### New JWT configuration or intentional secret rotation
+
+Generate a new value only when the Prosody `app_secret` and the portal
+configuration will be changed together:
+
+```bash
+JWT_SECRET="$(openssl rand -hex 48)"
+```
+
+Update both Prosody and `/etc/jitsi-invite/jwt.env` before restarting
+Prosody. Existing JWTs signed with the previous secret will stop
+working after a rotation.
+
+Configure `/etc/jitsi-invite/portal.env`:
 
 ```dotenv
 JITSI_INVITE_BASE_URL=https://meet.example.com
@@ -169,12 +196,13 @@ JITSI_INVITE_DB=/var/lib/jitsi-invite/invite.db
 JITSI_INVITE_CSRF_SECRET=replace-with-the-generated-csrf-secret
 JITSI_INVITE_GUEST_TOKEN_TTL=14400
 JITSI_INVITE_MODERATOR_TOKEN_TTL=28800
+JITSI_INVITE_SOCKET=/run/jitsi-invite/jitsi-invite.sock
 ```
 
-The `JITSI_APP_ID` and `JITSI_APP_SECRET` values must exactly match the
-corresponding Prosody `app_id` and `app_secret`.
+The `JITSI_APP_ID` and `JITSI_APP_SECRET` values must exactly match
+the corresponding active Prosody `app_id` and `app_secret`.
 
-After editing, remove the temporary shell variables:
+After editing, remove temporary shell variables that were created:
 
 ```bash
 unset JWT_SECRET CSRF_SECRET
@@ -220,7 +248,7 @@ The Jitsi VirtualHost must use strict token authentication:
 VirtualHost "meet.example.com"
     authentication = "token"
     app_id = "replace-with-the-private-application-id"
-    app_secret = "replace-with-the-generated-jwt-secret"
+    app_secret = "replace-with-the-active-or-new-shared-jwt-secret"
 ```
 
 Do **not** enable `allow_empty_token` and do not create an anonymous guest
@@ -291,8 +319,20 @@ Run:
 jitsi-invite-user add ORGANIZER_NAME
 ```
 
-The utility prompts for a password through `systemd-ask-password` and writes
-the nginx htpasswd file atomically.
+The utility intentionally reads the password with terminal echo enabled and
+asks for the same value a second time. This mode is intended for a
+physically controlled, single-user administrative session. It makes
+unexpected keyboard layouts, automatic language switching and faulty
+keyboard keys easier to detect.
+
+After a successful update, the assigned plaintext password is printed
+once together with the resulting APR1 hash. Both values are sensitive
+and may remain in terminal scrollback. Do not run this command where
+another person can observe the screen or where the terminal is shared
+or recorded.
+
+The nginx htpasswd file is updated through a temporary file and atomic
+rename.
 
 Verify only metadata, not hashes:
 
@@ -326,7 +366,23 @@ Validate source and configuration syntax:
 python3 -m py_compile /opt/jitsi-invite/app.py
 python3 -m py_compile /usr/local/sbin/jitsi-jwt
 bash -n /usr/local/sbin/jitsi-invite-user
-luac5.4 -p /usr/local/lib/prosody/modules/mod_token_roles.lua
+PROSODY_LUA_VERSION="$(
+    prosodyctl about 2>/dev/null |
+    sed -nE "s/^Lua version:.* ([0-9]+\.[0-9]+)$/\1/p"
+)"
+
+case "$PROSODY_LUA_VERSION" in
+    5.2|5.4)
+        "luac${PROSODY_LUA_VERSION}" \
+            -p /usr/local/lib/prosody/modules/mod_token_roles.lua
+        ;;
+    *)
+        echo "ERROR: unsupported or undetected Prosody Lua runtime" >&2
+        exit 1
+        ;;
+esac
+
+unset PROSODY_LUA_VERSION
 systemd-analyze verify /etc/systemd/system/jitsi-invite.service
 nginx -t
 prosodyctl check config
@@ -365,19 +421,70 @@ systemctl is-active \
 systemctl --no-pager --full status jitsi-invite
 ```
 
-Confirm the socket and absence of a portal TCP listener:
+Confirm the Unix socket and verify that the portal process has no TCP
+listener:
 
 ```bash
 stat -c '%A %U:%G %n' \
     /run/jitsi-invite/jitsi-invite.sock
 
-ss -lntp
+ss -H -lxnp |
+grep -F '/run/jitsi-invite/jitsi-invite.sock'
+
+PORTAL_PID="$(systemctl show -p MainPID --value jitsi-invite.service)"
+
+if ss -H -lntp | grep -Fq "pid=${PORTAL_PID},"; then
+    echo "ERROR: portal process has a TCP listener" >&2
+    exit 1
+fi
+
+echo "Portal TCP listener: none"
+unset PORTAL_PID
 ```
 
 ## 15. HTTP smoke tests
 
-Without organizer credentials, the protected route must return `401` and a
-Basic Auth challenge:
+First verify the backend contract directly through the Unix socket.
+The organizer route must reject a request without an authenticated
+organizer identity:
+
+```bash
+curl -sS \
+    --unix-socket /run/jitsi-invite/jitsi-invite.sock \
+    -o /dev/null \
+    -w '%{http_code}\n' \
+    http://localhost/invite/
+```
+
+Expected result:
+
+```text
+403
+```
+
+A request carrying the trusted identity normally supplied by nginx
+must succeed:
+
+```bash
+curl -sS \
+    --unix-socket /run/jitsi-invite/jitsi-invite.sock \
+    -H 'X-Remote-User: local-smoke-test' \
+    -o /dev/null \
+    -w '%{http_code}\n' \
+    http://localhost/invite/
+```
+
+Expected result:
+
+```text
+200
+```
+
+The portal does not expose a `/health` route. A `404` response from
+that path is therefore not a service failure.
+
+Without organizer credentials, the public protected route must return
+`401` and a Basic Auth challenge:
 
 ```bash
 curl -skS -o /dev/null -D - \

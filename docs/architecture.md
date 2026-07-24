@@ -22,7 +22,6 @@ role semantics.
 - invitation revocation;
 - guest landing page;
 - guest JWT issuance;
-- health endpoint;
 - SQLite persistence;
 - audit logging;
 - CSRF validation;

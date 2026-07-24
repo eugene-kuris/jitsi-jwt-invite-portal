@@ -54,6 +54,22 @@ The design assumes:
 - organizer accounts are individual and not shared;
 - server administrators protect root access and backups.
 
+## Visible administrative password entry
+
+The `jitsi-invite-user add` command intentionally uses visible terminal
+input and requests the password twice. After a successful update it
+prints the assigned plaintext password once and prints the APR1 hash.
+
+This mode is intended only for a physically controlled, single-user
+administrative session. It helps expose an unexpected keyboard layout,
+automatic language switching or a faulty key, but it does not protect
+against visual observation or terminal recording.
+
+Do not use the command in a shared terminal, an observed screen-sharing
+session, or a console whose scrollback is retained by an untrusted
+system. Treat both the plaintext password and the APR1 hash as
+sensitive credentials.
+
 ## Operational recommendations
 
 - Rotate the JWT signing secret after suspected disclosure.
