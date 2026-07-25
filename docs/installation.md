@@ -299,7 +299,7 @@ install -m 0644 -o root -g root \
     /etc/systemd/system/jitsi-invite.service
 
 systemctl daemon-reload
-systemctl enable jitsi-invite.service
+systemctl enable --now jitsi-invite.service
 ```
 
 The service creates `/run/jitsi-invite` through `RuntimeDirectory` and exposes
@@ -405,7 +405,7 @@ grep -nE \
 ```bash
 systemctl restart prosody
 systemctl restart jicofo
-systemctl start jitsi-invite
+systemctl restart jitsi-invite
 systemctl reload nginx
 ```
 
@@ -419,6 +419,21 @@ systemctl is-active \
     jitsi-invite
 
 systemctl --no-pager --full status jitsi-invite
+```
+
+Verify the Jitsi Videobridge health endpoint:
+
+```bash
+curl -sS \
+    -o /dev/null \
+    -w "HTTP %{http_code}\n" \
+    http://127.0.0.1:8080/about/health
+```
+
+Expected result:
+
+```text
+HTTP 200
 ```
 
 Confirm the Unix socket and verify that the portal process has no TCP
@@ -511,24 +526,44 @@ curl -skS -o /dev/null -w '%{http_code}\n' \
 
 Use a **new room** for each role test.
 
+The acceptance test requires at least three simultaneous clients. A
+two-client conference may remain in peer-to-peer mode and therefore does not
+prove that Jitsi Videobridge, UDP port 10000, ICE advertisement, or NAT
+configuration works.
+
 1. Authenticate to `/invite/` as an organizer.
 2. Create a temporary conference.
-3. Open the moderator entry first.
-4. Confirm that the moderator has the Jitsi moderator badge and controls.
-5. Open the guest invitation in a different browser profile.
-6. Confirm that the guest enters but has no moderator badge or controls.
-7. Open the bare room URL without `?jwt=...`.
-8. Confirm that Jitsi rejects the unauthenticated entry.
-9. Revoke the test invitation.
-10. Review service logs for role or authentication errors.
+3. Before opening the moderator entry, try the guest invitation and confirm
+   that the guest cannot enter the empty room.
+4. Open the moderator entry.
+5. Confirm that the moderator has the Jitsi moderator badge and controls.
+6. Open the guest invitation in a different browser profile.
+7. Confirm that the first guest enters but has no moderator badge or
+   controls.
+8. Open the guest invitation on a third client, preferably a separate
+   device using an external network such as mobile Internet.
+9. Confirm that the second guest enters but has no moderator badge or
+   controls.
+10. Keep all three clients connected simultaneously and verify
+    bidirectional audio and video.
+11. Open the bare room URL without `?jwt=...`.
+12. Confirm that Jitsi rejects the unauthenticated entry.
+13. Repeat the Jitsi Videobridge health check and require `HTTP 200`.
+14. Revoke the test invitation.
+15. Review Prosody, Jicofo and Jitsi Videobridge logs for role,
+    authentication, bridge-health or ICE errors.
 
-A deployment is not accepted until all four outcomes are verified:
+A deployment is not accepted until all outcomes are verified:
 
 ```text
 Moderator: moderator
-Guest: participant
+First guest: participant
+Second guest: participant
+Guest before moderator: rejected
 Bare room URL: rejected
-Audio/video: working
+Three-client audio/video: working
+Jitsi Videobridge health: HTTP 200
+New bridge-health or ICE errors: none
 ```
 
 ## 17. Rollback
