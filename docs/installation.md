@@ -73,7 +73,125 @@ cd "$REPO"
 Before changing a production host, create a VM snapshot or another tested
 rollback point.
 
-## 3. Install required packages
+## 3. Network prerequisites
+
+Define and verify the network topology before changing the portal, Prosody or
+Jicofo configuration. Jitsi signaling may appear to work while conferences
+fail as soon as media is routed through Jitsi Videobridge.
+
+The deployment requires:
+
+- a stable Jitsi FQDN with correct public DNS;
+- a stable public IPv4 address;
+- a stable server IPv4 address when the server is behind NAT;
+- public TCP port 443 reaching the Jitsi service, either directly at nginx or
+  at a trusted HTTPS reverse proxy that forwards to the intended Jitsi
+  virtual host;
+- inbound TCP port 80 when it is required for HTTP-to-HTTPS redirection or
+  certificate issuance;
+- inbound UDP port 10000 reaching the Jitsi Videobridge host directly or
+  through an explicit port-forwarding rule;
+- host and perimeter firewall rules permitting the required traffic;
+- outbound DNS, HTTPS and STUN/TURN access required by the Jitsi deployment.
+
+Determine which topology applies:
+
+1. the public IPv4 address is assigned directly to a server interface;
+2. the Jitsi server has a private IPv4 address behind NAT.
+
+### Public IPv4 directly assigned to the server
+
+When the public IPv4 address is assigned directly to a server interface, an
+explicit Jitsi Videobridge static NAT mapping is normally unnecessary.
+
+Verify the interface address, public DNS resolution and UDP listener:
+
+```bash
+ip -4 addr show
+getent ahostsv4 meet.example.com
+ss -H -lunp "( sport = :10000 )" | head -n 3
+```
+
+The public DNS address must match an address assigned to the server, and
+Jitsi Videobridge must listen on UDP port 10000.
+
+If nginx terminates TLS on the Jitsi server, inbound HTTPS must reach that
+nginx virtual host. If TLS terminates on a trusted reverse proxy, restrict
+the backend path appropriately and confirm that the proxy forwards requests
+to the intended Jitsi virtual host.
+
+### Private IPv4 behind NAT
+
+When the Jitsi server has a private IPv4 address and the public IPv4 address
+is assigned to an edge router or firewall, configure all of the following:
+
+- keep both the private server address and public address stable;
+- forward public UDP port 10000 to UDP port 10000 on the Jitsi server;
+- permit the forwarded traffic through perimeter and host firewalls;
+- configure Jitsi Videobridge to advertise the public address;
+- verify the result with at least three simultaneous conference clients.
+
+An HTTPS reverse proxy handles signaling and web traffic only. It does not
+proxy Jitsi Videobridge media. UDP port 10000 must be forwarded separately
+to the private IPv4 address of the Jitsi server.
+
+Back up `/etc/jitsi/videobridge/jvb.conf` before changing it. Add the
+appropriate static mapping inside the existing configuration, replacing the
+example addresses:
+
+```hocon
+ice4j {
+    harvest {
+        mapping {
+            aws {
+                enabled = false
+            }
+            stun {
+                addresses = ["meet-jit-si-turnrelay.jitsi.net:443"]
+            }
+            static-mappings = [
+                {
+                    local-address = "192.0.2.10"
+                    public-address = "198.51.100.20"
+                }
+            ]
+        }
+    }
+}
+```
+
+`local-address` is the stable private IPv4 address assigned to the Jitsi
+server. `public-address` is the stable public IPv4 address whose UDP port
+10000 is forwarded to that server.
+
+Do not create a second conflicting `ice4j` block. Merge the mapping into the
+existing `/etc/jitsi/videobridge/jvb.conf` structure, then restart
+Jitsi Videobridge:
+
+```bash
+systemctl restart jitsi-videobridge2
+```
+
+Verify the targeted UDP listener and health endpoint:
+
+```bash
+ss -H -lunp "( sport = :10000 )" | head -n 3
+
+curl -sS \
+    -o /dev/null \
+    -w "HTTP %{http_code}\n" \
+    http://127.0.0.1:8080/about/health
+```
+
+The expected health result is `HTTP 200`. Review Jicofo and Jitsi
+Videobridge logs and do not continue if they report bridge-health failures,
+ICE harvesting failures, or `No valid IP addresses available for
+harvesting`.
+
+Do not continue until the topology, address ownership, TLS termination point
+and UDP port-forwarding path are known.
+
+## 4. Install required packages
 
 ```bash
 apt-get update
@@ -94,7 +212,7 @@ deployment uses Lua 5.4, while the clean-VM validation host uses Lua 5.2.
 Both command-line compilers are therefore installed. During validation, use
 the compiler matching the `Lua version` reported by `prosodyctl about`.
 
-## 4. Create the service account and directories
+## 5. Create the service account and directories
 
 ```bash
 getent group jitsi-invite >/dev/null \
@@ -118,7 +236,7 @@ install -d -m 0750 -o jitsi-invite -g www-data \
     /var/lib/jitsi-invite
 ```
 
-## 5. Install the portal and administration utilities
+## 6. Install the portal and administration utilities
 
 ```bash
 install -m 0755 -o root -g root \
@@ -138,7 +256,7 @@ The runtime application is intentionally installed outside the Git working
 tree. Deploying a later revision therefore requires an explicit copy followed
 by validation and a controlled service restart.
 
-## 6. Create the secret configuration files
+## 7. Create the secret configuration files
 
 Install the examples:
 
@@ -218,7 +336,7 @@ stat -c '%A %U:%G %n' \
 
 Expected ownership is `root:jitsi-invite` with mode `0640`.
 
-## 7. Install the Prosody role module in an upgrade-safe directory
+## 8. Install the Prosody role module in an upgrade-safe directory
 
 Do not place the custom module only in the Jitsi package directory. A package
 upgrade may replace or remove files there.
@@ -265,7 +383,7 @@ installed Jitsi release and enable both:
 Use `examples/prosody-virtualhost.cfg.lua` as a fragment, not as a complete
 replacement for the site configuration generated by Jitsi packages.
 
-## 8. Disable Jicofo automatic ownership
+## 9. Disable Jicofo automatic ownership
 
 This setting is essential. If Jicofo automatic ownership remains enabled, it
 can promote the first ordinary participant to owner and defeat the moderator
@@ -279,7 +397,7 @@ jicofo.conference.enable-auto-owner = false
 
 The repository fragment is available at `examples/jicofo.conf`.
 
-## 9. Disable Jitsi's bare invitation controls
+## 10. Disable Jitsi's bare invitation controls
 
 In `/etc/jitsi/meet/meet.example.com-config.js`, set:
 
@@ -291,7 +409,7 @@ This prevents the interface from offering a room URL without the required
 JWT. It is a user-interface safeguard; strict Prosody token authentication
 remains the actual access-control boundary.
 
-## 10. Install and configure the systemd service
+## 11. Install and configure the systemd service
 
 ```bash
 install -m 0644 -o root -g root \
@@ -311,7 +429,7 @@ only this Unix socket:
 
 It must not listen on a TCP port.
 
-## 11. Create the first organizer account
+## 12. Create the first organizer account
 
 Run:
 
@@ -343,7 +461,7 @@ stat -c '%A %U:%G %s %n' \
 
 The file should be readable by nginx and not world-readable.
 
-## 12. Add the nginx routes
+## 13. Add the nginx routes
 
 Merge `nginx/jitsi-invite.conf` **inside the existing HTTPS server block** for
 the Jitsi domain.
@@ -358,7 +476,7 @@ The required behavior is:
 
 Do not install the fragment as a second independent virtual host.
 
-## 13. Validate before restart
+## 14. Validate before restart
 
 Validate source and configuration syntax:
 
@@ -400,7 +518,7 @@ grep -nE \
   /etc/jitsi/jicofo/jicofo.conf
 ```
 
-## 14. Start services in a controlled order
+## 15. Start services in a controlled order
 
 ```bash
 systemctl restart prosody
@@ -457,7 +575,7 @@ echo "Portal TCP listener: none"
 unset PORTAL_PID
 ```
 
-## 15. HTTP smoke tests
+## 16. HTTP smoke tests
 
 First verify the backend contract directly through the Unix socket.
 The organizer route must reject a request without an authenticated
@@ -522,7 +640,7 @@ curl -skS -o /dev/null -w '%{http_code}\n' \
     https://meet.example.com/join/not-a-real-invitation
 ```
 
-## 16. Mandatory browser role test
+## 17. Mandatory browser role test
 
 Use a **new room** for each role test.
 
@@ -566,7 +684,7 @@ Jitsi Videobridge health: HTTP 200
 New bridge-health or ICE errors: none
 ```
 
-## 17. Rollback
+## 18. Rollback
 
 Before every change, copy the original files to a root-only checkpoint.
 A minimal rollback consists of:
@@ -581,7 +699,7 @@ A minimal rollback consists of:
 
 Do not delete checkpoints until the functional browser test has passed.
 
-## 18. Upgrade procedure
+## 19. Upgrade procedure
 
 After any Jitsi Meet, Prosody, Lua, Jicofo, Jitsi Videobridge or nginx upgrade:
 
@@ -593,7 +711,7 @@ After any Jitsi Meet, Prosody, Lua, Jicofo, Jitsi Videobridge or nginx upgrade:
 5. repeat the moderator, guest and bare-room browser test;
 6. compare installed application files with the intended repository commit.
 
-## 19. Secret handling
+## 20. Secret handling
 
 Never publish or paste:
 
