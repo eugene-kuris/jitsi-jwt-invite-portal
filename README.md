@@ -8,9 +8,9 @@ invitation links, short-lived room-bound JWTs, explicit moderator and
 guest roles, SQLite audit logging, and a hardened systemd service that
 communicates with nginx only through a Unix socket.
 
-> **Project status:** working reference implementation derived from a
-> successfully tested deployment. Automated installation and clean-VM
-> validation are still in progress.
+> **Project status:** working reference implementation validated on both
+> the original deployment and a clean Debian 12 VM behind NAT. Automated
+> installation is not yet included.
 
 ## Problem
 
@@ -325,8 +325,8 @@ https://meet.example.com/join/<random-code>
 ## Tested software versions
 
 The original reference deployment completed end-to-end portal testing.
-A second clean Debian 12 VM is being used for release-candidate installation
-and compatibility validation.
+A second clean Debian 12 VM behind NAT also completed release-candidate
+installation, reboot and three-client audio/video validation.
 
 | Component | Reference deployment | Clean-VM RC validation |
 |---|---:|---:|
@@ -345,6 +345,9 @@ The two environments demonstrate that the Prosody version and its selected
 Lua runtime must be checked independently. Compatibility with other releases
 has not yet been fully validated.
 
+See [Clean-VM installation test](docs/clean-vm-install-test.md) for the
+validated NAT topology, discovered defects and acceptance-test results.
+
 ## Verified behavior
 
 The reference deployment successfully verified:
@@ -362,7 +365,13 @@ The reference deployment successfully verified:
 - the backend has no TCP listener;
 - direct Unix-socket access to `/invite/` returns `403` without
   `X-Remote-User` and `200` with a trusted organizer identity;
-- controlled service restarts complete successfully.
+- controlled service restarts complete successfully;
+- the portal service is enabled, survives reboot and recreates its Unix socket;
+- Jitsi Videobridge behind NAT advertises the configured public IPv4 address
+  and returns HTTP 200 from its health endpoint;
+- a three-client conference, including one client on mobile Internet,
+  completed with working audio/video and moderator privileges assigned only
+  to the JWT moderator.
 
 ## Validation
 
@@ -408,7 +417,6 @@ prosodyctl check config
 ## Known limitations
 
 - Installation is not yet fully automated.
-- A clean installation on a fresh Debian VM remains to be tested.
 - Guest rate limiting is stored in process memory.
 - Automated SQLite backup and retention are not yet implemented.
 - Portal HTML and CSS are embedded in the Python application.
